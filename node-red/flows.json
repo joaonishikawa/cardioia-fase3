@@ -1,0 +1,374 @@
+[
+  {
+    "id": "tab",
+    "type": "tab",
+    "label": "CardioIA Fase 3",
+    "info": "ESP32 -> MQTT -> regras clínicas -> dashboard em /ui"
+  },
+  {
+    "id": "broker",
+    "type": "mqtt-broker",
+    "name": "HiveMQ público",
+    "broker": "broker.hivemq.com",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "cfg_base",
+    "type": "ui_base",
+    "theme": {
+      "name": "theme-light"
+    },
+    "site": {
+      "name": "CardioIA",
+      "hideToolbar": "false",
+      "allowSwipe": "false",
+      "lockMenu": "false",
+      "allowTempTheme": "true",
+      "dateFormat": "DD/MM/YYYY",
+      "sizes": {
+        "sx": 48,
+        "sy": 48,
+        "gx": 6,
+        "gy": 6,
+        "cx": 6,
+        "cy": 6,
+        "px": 0,
+        "py": 0
+      }
+    }
+  },
+  {
+    "id": "cfg_tab",
+    "type": "ui_tab",
+    "name": "CardioIA: monitoramento",
+    "icon": "favorite",
+    "order": 1,
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "g_status",
+    "type": "ui_group",
+    "name": "Status do paciente",
+    "tab": "cfg_tab",
+    "order": 1,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+  {
+    "id": "g_graf",
+    "type": "ui_group",
+    "name": "Sinais vitais",
+    "tab": "cfg_tab",
+    "order": 2,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+  {
+    "id": "mqtt_in",
+    "type": "mqtt in",
+    "z": "tab",
+    "name": "Vitais do ESP32",
+    "topic": "cardioia/fase3-7f3a/esp32-01/vitais",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 130,
+    "y": 200,
+    "wires": [
+      [
+        "regras"
+      ]
+    ]
+  },
+  {
+    "id": "regras",
+    "type": "function",
+    "z": "tab",
+    "name": "Regras clínicas",
+    "func": "// Fog: valida a mensagem e aplica as regras clínicas. O broker é público, então nada é confiável.\nconst d = msg.payload;\nconst ok = d && typeof d === \"object\"\n    && Number.isFinite(d.temp) && d.temp >= -40 && d.temp <= 80\n    && Number.isFinite(d.umid) && d.umid >= 0 && d.umid <= 100\n    && Number.isInteger(d.bpm) && d.bpm >= 0 && d.bpm <= 300\n    && Number.isInteger(d.idade_s) && d.idade_s >= 0\n    && Number.isInteger(d.pendentes) && d.pendentes >= 0;\nif (!ok) {\n    node.warn(\"Mensagem inválida descartada\");\n    return null;\n}\n\nconst LIMITES = { tempMax: 38, bpmMax: 120, bpmMin: 50 };\nconst AO_VIVO_S = 15;\n\n// Amostras sincronizadas entram no gráfico no horário em que foram medidas\nconst timestamp = Date.now() - d.idade_s * 1000;\n\nconst motivos = [];\nif (d.bpm > LIMITES.bpmMax) motivos.push(`Taquicardia: ${d.bpm} bpm`);\nif (d.bpm > 0 && d.bpm < LIMITES.bpmMin) motivos.push(`Bradicardia: ${d.bpm} bpm`);\nif (d.temp > LIMITES.tempMax) motivos.push(`Febre: ${d.temp.toFixed(1)} °C`);\n\nlet estado = { cor: \"#43a047\", texto: \"NORMAL\", detalhe: `${d.bpm} bpm · ${d.temp.toFixed(1)} °C` };\nif (motivos.length) estado = { cor: \"#e53935\", texto: \"ALERTA\", detalhe: motivos.join(\" · \") };\nelse if (d.bpm === 0) estado = { cor: \"#fb8c00\", texto: \"SEM BATIMENTO\", detalhe: \"Nenhum toque nos últimos 6 s\" };\n\nconst aoVivo = d.idade_s <= AO_VIVO_S;\nconst horario = new Date(timestamp).toLocaleTimeString(\"pt-BR\");\n\nreturn [\n    { topic: \"BPM\", payload: d.bpm === 0 ? null : d.bpm, timestamp },\n    { topic: \"Temperatura\", payload: d.temp, timestamp },\n    aoVivo ? { payload: d.temp } : null,\n    aoVivo ? { payload: d.umid } : null,\n    aoVivo ? { payload: estado } : null,\n    motivos.length ? { payload: `${horario} · ${motivos.join(\" · \")}` } : null,\n    { payload: d.pendentes },\n];",
+    "outputs": 7,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 340,
+    "y": 200,
+    "wires": [
+      [
+        "ch_bpm"
+      ],
+      [
+        "ch_temp"
+      ],
+      [
+        "ga_temp"
+      ],
+      [
+        "ga_umid"
+      ],
+      [
+        "led",
+        "watchdog"
+      ],
+      [
+        "tx_alerta"
+      ],
+      [
+        "tx_pend"
+      ]
+    ]
+  },
+  {
+    "id": "init",
+    "type": "inject",
+    "z": "tab",
+    "name": "Início",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 340,
+    "wires": [
+      [
+        "watchdog"
+      ]
+    ]
+  },
+  {
+    "id": "watchdog",
+    "type": "trigger",
+    "z": "tab",
+    "name": "Sem dados por 20 s",
+    "op1": "",
+    "op2": "{\"cor\": \"#757575\", \"texto\": \"SEM DADOS\", \"detalhe\": \"Nenhuma leitura há mais de 20 s\"}",
+    "op1type": "nul",
+    "op2type": "json",
+    "duration": "20",
+    "extend": true,
+    "overrideDelay": false,
+    "units": "s",
+    "reset": "",
+    "bytopic": "all",
+    "topic": "topic",
+    "outputs": 1,
+    "x": 350,
+    "y": 340,
+    "wires": [
+      [
+        "led"
+      ]
+    ]
+  },
+  {
+    "id": "led",
+    "type": "ui_template",
+    "z": "tab",
+    "group": "g_status",
+    "name": "LED virtual",
+    "order": 1,
+    "width": "6",
+    "height": "2",
+    "format": "<div style=\"display:flex;align-items:center;gap:14px;height:100%\">\n  <div ng-style=\"{'background-color': msg.payload.cor}\" style=\"flex:none;width:52px;height:52px;border-radius:50%\"></div>\n  <div>\n    <div style=\"font-size:22px;font-weight:700\">{{msg.payload.texto}}</div>\n    <div>{{msg.payload.detalhe}}</div>\n  </div>\n</div>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 610,
+    "y": 280,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "tx_alerta",
+    "type": "ui_text",
+    "z": "tab",
+    "group": "g_status",
+    "order": 2,
+    "width": "6",
+    "height": "2",
+    "name": "Último alerta registrado",
+    "label": "Último alerta registrado",
+    "format": "{{msg.payload}}",
+    "layout": "col-center",
+    "x": 630,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "tx_pend",
+    "type": "ui_text",
+    "z": "tab",
+    "group": "g_status",
+    "order": 5,
+    "width": "12",
+    "height": "1",
+    "name": "Amostras pendentes no ESP32",
+    "label": "Amostras pendentes no ESP32",
+    "format": "{{msg.payload}}",
+    "layout": "row-center",
+    "x": 640,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "ga_temp",
+    "type": "ui_gauge",
+    "z": "tab",
+    "name": "Temperatura",
+    "group": "g_status",
+    "order": 3,
+    "width": "6",
+    "height": "4",
+    "gtype": "gage",
+    "title": "Temperatura",
+    "label": "°C",
+    "format": "{{value | number:1}}",
+    "min": "30",
+    "max": "42",
+    "colors": [
+      "#43a047",
+      "#fb8c00",
+      "#e53935"
+    ],
+    "seg1": "37.5",
+    "seg2": "38",
+    "x": 590,
+    "y": 170,
+    "wires": []
+  },
+  {
+    "id": "ga_umid",
+    "type": "ui_gauge",
+    "z": "tab",
+    "name": "Umidade",
+    "group": "g_status",
+    "order": 4,
+    "width": "6",
+    "height": "4",
+    "gtype": "gage",
+    "title": "Umidade",
+    "label": "%",
+    "format": "{{value | number:1}}",
+    "min": "0",
+    "max": "100",
+    "colors": [
+      "#fb8c00",
+      "#43a047",
+      "#fb8c00"
+    ],
+    "seg1": "30",
+    "seg2": "70",
+    "x": 590,
+    "y": 225,
+    "wires": []
+  },
+  {
+    "id": "ch_bpm",
+    "type": "ui_chart",
+    "z": "tab",
+    "name": "Batimentos (BPM)",
+    "group": "g_graf",
+    "order": 1,
+    "width": "12",
+    "height": "5",
+    "label": "Batimentos (BPM)",
+    "chartType": "line",
+    "legend": "false",
+    "xformat": "HH:mm:ss",
+    "interpolate": "linear",
+    "nodata": "Aguardando dados",
+    "dot": true,
+    "ymin": "0",
+    "ymax": "200",
+    "removeOlder": "30",
+    "removeOlderPoints": "",
+    "removeOlderUnit": "60",
+    "cutout": 0,
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#e53935",
+      "#aec7e8",
+      "#ff7f0e",
+      "#2ca02c",
+      "#98df8a",
+      "#d62728",
+      "#ff9896",
+      "#9467bd"
+    ],
+    "outputs": 1,
+    "useDifferentColor": false,
+    "x": 600,
+    "y": 60,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ch_temp",
+    "type": "ui_chart",
+    "z": "tab",
+    "name": "Temperatura (°C)",
+    "group": "g_graf",
+    "order": 2,
+    "width": "12",
+    "height": "5",
+    "label": "Temperatura (°C)",
+    "chartType": "line",
+    "legend": "false",
+    "xformat": "HH:mm:ss",
+    "interpolate": "linear",
+    "nodata": "Aguardando dados",
+    "dot": true,
+    "ymin": "30",
+    "ymax": "42",
+    "removeOlder": "30",
+    "removeOlderPoints": "",
+    "removeOlderUnit": "60",
+    "cutout": 0,
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#1f77b4",
+      "#aec7e8",
+      "#ff7f0e",
+      "#2ca02c",
+      "#98df8a",
+      "#d62728",
+      "#ff9896",
+      "#9467bd"
+    ],
+    "outputs": 1,
+    "useDifferentColor": false,
+    "x": 600,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  }
+]

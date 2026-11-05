@@ -1,0 +1,9 @@
+{
+  "name": "cardioia-fase3-dashboard",
+  "private": true,
+  "scripts": { "start": "node-red --userDir . flows.json" },
+  "dependencies": {
+    "node-red": "^4.1.0",
+    "node-red-dashboard": "^3.6.5"
+  }
+}
